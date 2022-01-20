@@ -3,6 +3,21 @@ uuid = "be660749-8e35-4f43-b287-dc089089f845"
 authors = ["Arthur Newbury"]
 version = "0.1.0"
 
+[deps]
+BioAlignments = "00701ae9-d1dc-5365-b64a-a3a3ebf5695e"
+BioSequences = "7e6ae17a-c86d-528c-b3b9-7f778a29fe59"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+FASTX = "c2308a5c-f048-11e8-3e8a-31650f418d12"
+LazyStack = "1fad7336-0346-5a1a-a56f-a06ba010965b"
+Loess = "4345ca2d-374a-55d4-8d30-97f9976e7612"
+LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
+Poppler_jll = "9c32591e-4766-534b-9725-b71a8799265b"
+RCall = "6f49c342-dc21-5d91-9882-a32aef131414"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
+StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
+
 [compat]
 julia = "1.6"
 
