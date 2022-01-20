@@ -1,7 +1,5 @@
-ρₚₒᵢₛ = poispdf
-#get_pval(nⱼλᵢⱼ,aⱼ) = (1/(1-ρₚₒᵢₛ(nⱼλᵢⱼ,0)))*(1-poiscdf(nⱼλᵢⱼ,aⱼ))
+ρₚₒᵢₛ = StatsFuns.poispdf
 get_pval(nⱼλᵢⱼ,aⱼ) = poisccdf(nⱼλᵢⱼ,aⱼ-1)
-log_pval(nⱼλᵢⱼ,aⱼ)  = poislogccdf(nⱼλᵢⱼ,aⱼ-1)
 
 function get_norm(nⱼ,TAIL_APPROX_CUTOFF =1e-7)
     norm = (1.0 - exp(-nⱼ))
@@ -10,15 +8,8 @@ function get_norm(nⱼ,TAIL_APPROX_CUTOFF =1e-7)
     end
     return norm
 end
-function log_norm(nⱼ,TAIL_APPROX_CUTOFF =log(1e-7))
-    norm = log(1.0 - exp(-nⱼ))
-    if norm < TAIL_APPROX_CUTOFF
-      norm = log(nⱼ - 0.5*nⱼ*nⱼ) 
-    end
-    return norm
-end
+
 get_normed_pval(nⱼ,λᵢⱼ,aⱼ) = get_pval(nⱼ*λᵢⱼ,aⱼ)/get_norm(nⱼ*λᵢⱼ) #get_norm(nⱼ*λᵢⱼ)?
-log_normed_pval(nⱼ,λᵢⱼ,aⱼ) = log_pval(nⱼ*λᵢⱼ,aⱼ) -log_norm(nⱼ*λᵢⱼ) #get_norm(nⱼ*λᵢⱼ)?
 
 
 function loess_errors(mat)
@@ -57,57 +48,6 @@ function loess_errors(mat)
       return err
   end
   
-  
-function log_compare!(seqs,quals,counts,ind,centres,partition,pvals,n,reads,λ, err,mers,hdists,E_minmax;band_size =16, kdist_cut = 0.42,gapless = false)
-    affinegap = AffineGapScoreModel(match=5,
-                                mismatch=-4,
-                                 gap_open=-0,
-                                 gap_extend=-8)
-    base_vals = Base.ImmutableDict(DNA_A=>1,DNA_C=>2,DNA_G=>3,DNA_T=>4)
-    l = keys(base_vals)
-    mer_dist = 0.0
-    nⱼ = sum(counts[partition .== ind])#counts[ind]#expected_reads_centre(seqs[ind],counts[ind],quals[ind],err)
-    Threads.@threads for i in 1:n
-            hdist = 0.0
-        if !in(i,centres)          
-            mer_dist = kmer_distance(mers[:,ind],mers[:,i],length(seqs[ind]),length(seqs[i]))
-            if mer_dist < kdist_cut
-                if gapless & (kord_distance(seqs[ind], seqs[i]) == mer_dist)
-                    pa = [(seqs[ind][j],seqs[i][j]) for j in 1:length(seqs[i])]               
-                elseif band_size >0
-                    pa = pairalign(OverlapAlignment(), seqs[ind], seqs[i],affinegap,true,band_size,band_size)  
-                else   
-                    pa = pairalign(OverlapAlignment(), seqs[ind], seqs[i],affinegap)
-                end      
-                qs = quals[i]#Int.(round.(derep.quality[i]))
-                q = 0
-                aln = (collect(pa.aln))
-                λᵢⱼ = 0.0
-
-                for j in 1:length(aln)
-   
-                    if in(aln[j][2],l) 
-                        q+=1
-                        j_ind = base_vals[aln[j][2]]
-                            i_ind = in(aln[j][1],l) ? base_vals[aln[j][1]] : base_vals[aln[j][2]]
-                            λᵢⱼ+=  log(err[(i_ind-1)*4+j_ind,qs[q]+1])                    
-                    end
-                end
-                
-            else
-                λᵢⱼ = -Inf
-                hdist = Inf
-            end
-            if exp(log(counts[ind]) + λᵢⱼ) > E_minmax[i]
-                E_minmax[i] = exp(log(counts[ind]) + λᵢⱼ)
-                λ[i] = exp(λᵢⱼ)
-            else λ[i] =-Inf
-            end
-            hdists[i] = hdist
-        end
-    end 
-end
-
 function compare!(seqs,quals,counts,ind,centres,partition,pvals,n,reads,λ, err,mers,hdists,E_minmax; band_size = 16,kdist_cut = 0.42,gapless = false)
     affinegap = AffineGapScoreModel(match=5,
                                 mismatch=-4,
@@ -116,7 +56,7 @@ function compare!(seqs,quals,counts,ind,centres,partition,pvals,n,reads,λ, err,
     base_vals = Base.ImmutableDict(DNA_A=>1,DNA_C=>2,DNA_G=>3,DNA_T=>4)
     l = keys(base_vals)
     mer_dist = 0.0
-    nⱼ = sum(counts[partition .== ind])#counts[ind]#expected_reads_centre(seqs[ind],counts[ind],quals[ind],err)
+    nⱼ = sum(counts[partition .== ind])
     Threads.@threads for i in 1:n
             hdist = 0.0
         if !in(i,centres)          
@@ -132,56 +72,45 @@ function compare!(seqs,quals,counts,ind,centres,partition,pvals,n,reads,λ, err,
                     end            
                 aln = (collect(pa.aln))
                 end
-                qs = quals[i]#Int.(round.(derep.quality[i]))
+                qs = quals[i]
                 q = 0
                 λᵢⱼ = 1.0
-                    for j in 1:length(aln)#end_aln
-                        #if start_aln <= j <= end_aln
-                            #hdist += aln[j][1] !== aln[j][2]
-                        #end
+                    for j in 1:length(aln)
+
                         if in(aln[j][2],l) 
                             q+=1
-                            #if in(aln[j][1],l) 
                                 j_ind = base_vals[aln[j][2]]
                                 i_ind = in(aln[j][1],l) ? base_vals[aln[j][1]] : base_vals[aln[j][2]]
                                 λᵢⱼ*=  err[(i_ind-1)*4+j_ind,qs[q]+1]
                             hdist += 1
-
-                            #end
                         end
                     end
-                #end               
             else
                 λᵢⱼ = 0.0
                 hdist = Inf
             end
-            if n * λᵢⱼ > E_minmax[i]
-                E_minmax[i] = counts[ind] * λᵢⱼ
-                λ[i] = λᵢⱼ
-            else λ[i] = 0.0
-            end
-        
-            #λ[i] = λᵢⱼ
+            λ[i] = λᵢⱼ
             hdists[i] = hdist
         end
     end 
 end
 
-log_boolfunction(pvals,n,ωₐ) = any(pvals .+ log(n) .< log(ωₐ))
-
 boolfunction(pvals,n,ωₐ) = any(pvals .* n .< ωₐ)
 
-function minp(pvals,counts,centres,n = length(pvals))
+function minp(pvals,counts,centres,partition,n = length(pvals))
     minval = 1.0
     min_ind = 1
-    @inbounds for i in 1:n
-        if !in(i,centres)
-            if pvals[i] < minval
-                minval = pvals[i]
-                min_ind = i
-            elseif (pvals[i] == minval) & (counts[i]> counts[min_ind])
-                minval = pvals[i]
-                min_ind = i
+    #@inbounds for i in 1:n
+        for bi in 1:length(centres)
+            @inbounds for i in (1:n)[partition .== centres[bi]]
+            if !in(i,centres)
+                if pvals[i] < minval
+                    minval = pvals[i]
+                    min_ind = i
+                elseif (pvals[i] == minval) & (counts[i]> counts[min_ind])
+                    minval = pvals[i]
+                    min_ind = i
+                end
             end
         end
     end
@@ -191,19 +120,8 @@ end
 
 
 function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = false,log_λ=false, kdist_cut = 0.42,gapless = false)
-    if log_p
-        boolfunc = log_boolfunction
-    else
-        boolfunc = boolfunction
-    end
-    if log_λ
-        compfunc! = log_compare!
-    else
-        compfunc! = compare!
-    end
 
     n = length(counts)
-    N = sum(counts)
     pvals = zeros(n)
     centres = []
     clusters = []
@@ -214,57 +132,42 @@ function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = fal
     # first centre is most abundant sequence 
     ind = findmax(counts)[2]
     centres = [ind]
-    pvals[ind] = log_p ? 0.0 : 1.0
+    pvals[ind] = 1.0
     partition = fill(ind,n)
-    compfunc!(seqs,quals,counts,ind,centres,partition,pvals,n,[],λ, err,mers,hdists,E_minmax,band_size = band_size,kdist_cut = Inf,gapless = gapless)
+    compare!(seqs,quals,counts,ind,centres,partition,pvals,n,[],λ, err,mers,hdists,E_minmax,band_size = band_size,kdist_cut = Inf,gapless = gapless)
     base_vals = Base.ImmutableDict(DNA_A=>1,DNA_C=>2,DNA_G=>3,DNA_T=>4)
     l = keys(base_vals)
     reads=[sum(counts)]
     expected_reads .= λ .* reads
     E_minmax .= λ .* counts[ind]
-    if log_p
-        for i in 1:n
-            if !in(i,centres) # need to actually do all the alignments as wel!!!!
-                partition[i] = centres[1]
-                pvals[i] = log_normed_pval(reads[1],λ[i],counts[i])
-                #pvals[i] = isnan(pvals[i]) ? -Inf : pvals[i]         
-                pvals[i] = counts[i] ==1 ? 0.0 : pvals[i]
-            end
-        end
-    else
-        for i in 1:n
-            if !in(i,centres) 
-                partition[i] = centres[1]
-                pvals[i] = get_normed_pval(reads[1],λ[i],counts[i])
-                #pvals[i] = isnan(pvals[i]) ? 0.0 : pvals[i]         
-                pvals[i] = counts[i] ==1 ? 1.0 : pvals[i]
-            end
+    
+    for i in 1:n
+        if !in(i,centres) 
+            partition[i] = centres[1]
+            pvals[i] = get_normed_pval(reads[1],λ[i],counts[i])
         end
     end
 
+
     coun = 0
-    while true#(boolfunc(pvals,n,ωₐ)) #& (length(centres) < 356)
+    while true
         coun +=1
-        #ind = findmin(pvals)[2]
-        val, ind = minp(pvals,counts,centres)
-        if  boolfunc(val,n,ωₐ) & !in(ind, centres)
-        #if  boolfunc(val,N,ωₐ) & !in(ind, centres)
+        val, ind = minp(pvals,counts,centres,partition)
+        if  boolfunction(val,n,ωₐ) & !in(ind, centres)
             partition[ind] = ind
             pvals[ind] = log_p ? 0.0 : 1.0
             partition[centres] .= centres
             push!(centres,ind)
             expected_reads = hcat(expected_reads,zeros(n))
-
             λ = hcat(λ,zeros(n))
             hdists = hcat(hdists,zeros(n))               
-            compfunc!(seqs,quals,counts,ind,centres,partition,pvals,n,reads,view(λ,:,length(centres)), 
+            compare!(seqs,quals,counts,ind,centres,partition,pvals,n,reads,view(λ,:,length(centres)), 
             err,mers,view(hdists,:,length(centres)),E_minmax,
             band_size = band_size,kdist_cut = kdist_cut,gapless = gapless)
         else
             break
         end
         reads = [sum(counts[partition .== i]) for i in centres]'
-       # println([length(centres) sum(pvals .+ log(n) .< log(ωₐ)) sum(reads .==1)])
         change = true
         shuff = 1
         while shuff <10   
@@ -285,26 +188,14 @@ function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = fal
                             reads[j] += counts[i]
                             reads[prev_j] -= counts[i]
                             partition[i] = centres[j]
-                            #expected_reads[:,j] .=  λ[:,j] .* reads[j]
-                            #expected_reads[:,prev_j] .=  λ[:,prev_j] .* reads[prev_j]
-
                         end
-                        if log_p & (shuff ==10)
-                            pvals[i] = log_normed_pval(reads[j],λ[i,j],counts[i])
-                            pvals[i] = counts[i] ==1 ? 0.0 : pvals[i]
-                        elseif shuff ==10
+                        if shuff ==10
                             pvals[i] = get_normed_pval(reads[j],λ[i,j],counts[i])
-                            pvals[i] = counts[i] ==1 ? 1.0 : pvals[i]
                         end         
                     end
                 end  
             end        
         end
-        if coun /30 == coun ÷ 30
-            println([length(centres) sum(pvals .+ log(n) .< log(ωₐ)) sum(reads .==1)])
-            println(reads)
-        end
-       # println([sum(pvals .== -0.0) sum(0.0 .< pvals .< 1.0) sum(pvals .== 1.0)] )
     end
     reads = [sum(counts[partition .== i]) for i in centres]'
     trans_mat = get_trans(centres,seqs,quals,counts,partition,n)
@@ -313,16 +204,14 @@ function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = fal
     for i in 1:n
         cluster_map[i] = partition_map[partition[i]]
     end
-    inds = 1:n
     cs = []
     for i in 1:length(centres)
         boolmask = partition .== centres[i]
         raws = seqs[boolmask]
         abunds = counts[boolmask]
+        mx = findmax(abunds)[2]
         push!(cs,raws[findmax(abunds)[2]])
     end
-
-    #return (df =DataFrame([seqs[centres],vec(reads)],[:sequence,:abundance]),trans =  trans_mat,pvals = pvals,cluster_map =cluster_map)
     return (df =DataFrame([cs,vec(reads)],[:sequence,:abundance]),trans =  trans_mat,pvals = pvals,cluster_map =cluster_map)
 end
 
@@ -341,7 +230,6 @@ function get_trans(centres,seqs,quals,counts,partition,n)
             q = 0
             aln = (collect(pa.aln))
             for j in 1:length(aln)# need to make this start from start of seq[i] in alignment e.g. firt !== DNA_GAP
-                #if aln[j][1] !== aln[j][2]
                     if in(aln[j][2],l) 
                         q+=1
                         
@@ -350,7 +238,6 @@ function get_trans(centres,seqs,quals,counts,partition,n)
                             trans_mat[(i_ind-1)*4+j_ind, qs[q]+1] +=counts[i]
                         
                     end
-                #end
             end
         end
     end 

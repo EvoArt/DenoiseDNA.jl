@@ -1,9 +1,8 @@
 module DenoiseDNA
-using FASTX, BioSequences, LoopVectorization, CodecZlib, BioAlignments, DataFrames#, CSV,ProfileView
-using LazyStack, Poppler_jll,StatsBase#,FastHistograms,StatsBase,ProfileView#,CairoMakie
-using RCall#, ReadDataStores
-#using StatsFuns, SortingLab, Tullio,Polyester,UnicodePlots
-using StatsFuns, Loess,CairoMakie#, MultipleTesting, SparseArrays
+using FASTX, BioSequences, LoopVectorization, CodecZlib, BioAlignments, DataFrames
+using LazyStack, Poppler_jll,StatsBase
+using RCall
+using StatsFuns, Loess,CairoMakie
 
 include.(["plotting.jl",
         "fileIO.jl",
