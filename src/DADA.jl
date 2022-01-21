@@ -77,38 +77,51 @@ boolfunction(pvals,n,ωₐ) = any(pvals .* n .< ωₐ)
 function minp(pvals,counts,centres,partition,n = length(pvals))
     minval = 1.0
     min_ind = 1
-    #@inbounds for i in 1:n
-        for bi in 1:length(centres)
-            @inbounds for i in (1:n)[partition .== centres[bi]]
-            if !in(i,centres)
-                if pvals[i] < minval
-                    minval = pvals[i]
-                    min_ind = i
-                elseif (pvals[i] == minval) & (counts[i]> counts[min_ind])
-                    minval = pvals[i]
-                    min_ind = i
-                end
+        @inbounds for i in 1:n
+        if !in(i,centres)
+            if pvals[i] < minval
+                minval = pvals[i]
+                min_ind = i
+            elseif (pvals[i] == minval) & (counts[i]> counts[min_ind])
+                minval = pvals[i]
+                min_ind = i
             end
         end
     end
     return minval, min_ind
 end
 
+function shuffle(centres,partition,compI,compV,reads,pvals,counts,n,shuff,max_shuffle)
+    change = false
+    @inbounds for i in (1:n)
+        if !in(i,centres) 
+            λ,k = findmax(compV[i] .* reads[compI[i]])
+            j = compI[i][k]
+            prev_j = findfirst(centres .== [partition[i]])
+            if j !== prev_j
+                change = true
+                reads[j] += counts[i]
+                reads[prev_j] -= counts[i]
+                partition[i] = centres[j]
+            end      
+            if shuff == max_shuffle
+                pvals[i] = get_normed_pval(reads[j],compV[i][k],counts[i])
+            end
+        end
+    end
+    return change
+end
 
-
-function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = false,log_λ=false, kdist_cut = 0.42,gapless = false)
+function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = false,log_λ=false, kdist_cut = 0.42,
+    gapless = false, max_shuffle = 10)
 
     n = length(counts)
     pvals = zeros(n)
     centres = []
-    clusters = []
-    expected_reads = zeros(n)
     E_minmax = zeros(n)
     hdists = zeros(n)
-    #comp = fill([Vector{Int}(undef,0),Vector{Float64}(undef,0)],n)#zeros(n)
     compI = [Vector{Int}(undef,0) for i in 1:n]
     compV = [Vector{Float64}(undef,0) for i in 1:n]
-    # first centre is most abundant sequence 
     ind = findmax(counts)[2]
     centres = [ind]
     pvals[ind] = 1.0
@@ -117,9 +130,7 @@ function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = fal
     base_vals = Base.ImmutableDict(DNA_A=>1,DNA_C=>2,DNA_G=>3,DNA_T=>4)
     l = keys(base_vals)
     reads=[sum(counts)]
-    #expected_reads .= λ .* reads
-    #E_minmax .= λ .* counts[ind]
-    
+
     for i in 1:n
         if !in(i,centres) 
             partition[i] = centres[1]
@@ -129,17 +140,13 @@ function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = fal
     coun = 0
     while true
         coun +=1
-        println(maximum(E_minmax))
         println(coun)
         val, ind = minp(pvals,counts,centres,partition)
-        println(val," ", ind)
         if  boolfunction(val,n,ωₐ) & !in(ind, centres)
             partition[ind] = ind
             pvals[ind] = 1.0
             partition[centres] .= centres
             push!(centres,ind)
-            #expected_reads = hcat(expected_reads,zeros(n))
-            #λ = hcat(λ,zeros(n))
             hdists = hcat(hdists,zeros(n))               
             compare!(seqs,quals,counts,ind,centres,partition,pvals,n,reads,compI,compV, 
             err,mers,view(hdists,:,length(centres)),E_minmax,
@@ -150,56 +157,35 @@ function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = fal
         reads = [sum(counts[partition .== i]) for i in centres]'
         change = true
         shuff = 1
-        while shuff <10   
+        while shuff < max_shuffle 
             shuff +=1
             if change ==false
-               shuff = 10
+               shuff = max_shuffle
             end
             change = false
-
-            #expected_reads .=  λ .* reads
-            #for bi in 1:length(centres)
-            #tmp_reads = copy(reads)
-                @inbounds for i in (1:n)#[partition .== centres[bi]]
-                    if !in(i,centres) 
-                        #j = findmax(expected_reads[i,:])[2]# slow!
-                        λ,k = findmax(compV[i] .* reads[compI[i]])# slow!
-                        #println(k)
-                        #println(length(comp[i][2]))
-                        j = compI[i][k]
-                        #println("im $(j)")
-                        prev_j = findfirst(centres .== [partition[i]])
-                        if j !== prev_j
-                            change = true
-                            reads[j] += counts[i]
-                            reads[prev_j] -= counts[i]
-                            partition[i] = centres[j]
-                        end
-                        if shuff ==10
-                            pvals[i] = get_normed_pval(reads[j],compV[i][k],counts[i])
-                        end         
-                    end
-                end
-                #reads .= tmp_reads  
-            #end        
+            change = shuffle(centres,partition,compI,compV,reads,pvals,counts,n,shuff,max_shuffle)         
         end
     end
     reads = [sum(counts[partition .== i]) for i in centres]'
     trans_mat = get_trans(centres,seqs,quals,counts,partition,n)
     cluster_map = Vector{Int}(undef,n)
-    partition_map = Dict([centres[i] => i for i in 1:length(centres)]...)
-    for i in 1:n
-        cluster_map[i] = partition_map[partition[i]]
-    end
-    cs = []
+
+    center_raws = []
     for i in 1:length(centres)
         boolmask = partition .== centres[i]
         raws = seqs[boolmask]
         abunds = counts[boolmask]
-        mx = findmax(abunds)[2]
-        push!(cs,raws[findmax(abunds)[2]])
+        inds = collect(1:n)[boolmask]
+        push!(center_raws,raws[findmax(abunds)[2]])
+        centres[i] = inds[findmax(abunds)[2]]
+        partition[boolmask] .= centres[i] 
     end
-    return (df =DataFrame([cs,vec(reads)],[:sequence,:abundance]),trans =  trans_mat,pvals = pvals,cluster_map =cluster_map)
+    partition_map = Dict([centres[i] => i for i in 1:length(centres)]...)
+    for i in 1:n
+        cluster_map[i] = partition_map[partition[i]]
+    end
+
+    return (df =DataFrame([center_raws,vec(reads)],[:sequence,:abundance]),trans =  trans_mat,pvals = pvals,cluster_map =cluster_map)
 end
 
 function get_trans(centres,seqs,quals,counts,partition,n)
@@ -217,12 +203,13 @@ function get_trans(centres,seqs,quals,counts,partition,n)
             q = 0
             aln = (collect(pa.aln))
             for j in 1:length(aln)# need to make this start from start of seq[i] in alignment e.g. firt !== DNA_GAP
-                    if in(aln[j][2],l) 
-                        q+=1
-                        
-                            j_ind = base_vals[aln[j][2]]
-                            i_ind = in(aln[j][1],l) ? base_vals[aln[j][1]] : base_vals[aln[j][2]]
-                                trans_mat[(i_ind-1)*4+j_ind, qs[q]+1] +=counts[i]
+                    if in(aln[j][1],l) 
+                        if in(aln[j][2],l)
+                            q+=1        
+                            i_ind = base_vals[aln[j][2]]
+                            j_ind =  base_vals[aln[j][2]] 
+                            trans_mat[(i_ind-1)*4+j_ind, qs[q]+1] +=counts[i]
+                        end
                         
                     end
             end
@@ -230,7 +217,7 @@ function get_trans(centres,seqs,quals,counts,partition,n)
     end 
     return trans_mat
 end
-function learnErrors(dereps ::Vector{DataFrame};nbases = 1e8, band_size = 16,ωₐ = 1e-40,kdist_cut = 0.42)
+function learnErrors(dereps ::Vector{DataFrame}, max_tries = 10;nbases = 1e8, band_size = 16,ωₐ = 1e-40,kdist_cut = 0.42)
 
     st = time()
     base_count = 0
@@ -261,11 +248,12 @@ function learnErrors(dereps ::Vector{DataFrame};nbases = 1e8, band_size = 16,ω�
         trans_mat = sum(trans_mats)
         err = loess_errors(trans_mat)
         push!(errs,err)
-       # println(errs[i] .- errs[i-1])
-        println(mean(abs.(errs[i] .- errs[i-1])))
-        println(any([errs[i][.!isnan.(errs[i])] ≈ errs[j][.!isnan.(errs[j])] for j in 1:i-1]))
-        println("time is : $(time() - st)")
-       println(UnicodePlots.heatmap(errs[i] .- errs[i-1]))
+        println("Time elapsed: $(time() - st) seconds")
+       println(UnicodePlots.heatmap(errs[i] .- errs[i-1], title = "Change from previous error estimate"))
+       if any([errs[i][.!isnan.(errs[i])] ≈ errs[j][.!isnan.(errs[j])] for j in 1:i-1])
+            println("Successfully converged")
+            break
+       end
     end
     return errs,trans_mat, trans_mats
 end
