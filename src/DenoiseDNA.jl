@@ -1,8 +1,9 @@
 module DenoiseDNA
-using FASTX, BioSequences, LoopVectorization, CodecZlib, BioAlignments, DataFrames
-using LazyStack, Poppler_jll,StatsBase
+using FASTX, BioSequences,  BioAlignments # BioJulia
+import BioAlignments.pairalign
+using StatsFuns, Loess,LazyStack, StatsBase,LoopVectorization, CodecZlib,DataFrames
+using CairoMakie,UnicodePlots, Poppler_jll # visualisation
 using RCall
-using StatsFuns, Loess,CairoMakie
 
 include.(["plotting.jl",
         "fileIO.jl",
@@ -15,5 +16,6 @@ export quality_plot,
         custering,
         trim,
         dereplicate,
-        get_files
+        get_files,
+        learnErrors
 end

@@ -15,7 +15,7 @@ get_normed_pval(nⱼ,λᵢⱼ,aⱼ) = get_pval(nⱼ*λᵢⱼ,aⱼ)/get_norm(nⱼ
 
 
 
-function compare!(seqs,quals,counts,ind,centres,partition,pvals,n,reads,λ, err,mers,hdists,E_minmax; band_size = 16,kdist_cut = 0.42,gapless = false)
+function compare!(seqs,quals,counts,ind,centres,partition,pvals,n,reads,compI,compV, err,mers,hdists,E_minmax; band_size = 16,kdist_cut = 0.42,gapless = false)
     affinegap = AffineGapScoreModel(match=5,
                                 mismatch=-4,
                                  gap_open=-0,
@@ -23,43 +23,53 @@ function compare!(seqs,quals,counts,ind,centres,partition,pvals,n,reads,λ, err,
     base_vals = Base.ImmutableDict(DNA_A=>1,DNA_C=>2,DNA_G=>3,DNA_T=>4)
     l = keys(base_vals)
     mer_dist = 0.0
+    λᵢⱼ = 0.0
     nⱼ = sum(counts[partition .== ind])
-    Threads.@threads for i in 1:n
+    N = sum(counts)
+    #Threads.@threads for i in 1:n
+     for i in 1:n
             hdist = 0.0
-        if !in(i,centres)          
-            mer_dist = kmer_distance(mers[:,ind],mers[:,i],length(seqs[ind]),length(seqs[i]))
-            if mer_dist < kdist_cut
-                if gapless & (kord_distance(seqs[ind], seqs[i]) == mer_dist)
-                    aln = Tuple([(seqs[ind][j],seqs[i][j]) for j in 1:length(seqs[i])])              
-                else
-                    if band_size >0
-                        pa = pairalign(OverlapAlignment(), seqs[ind], seqs[i],affinegap,true,band_size,band_size)  
-                    else   
-                        pa = pairalign(OverlapAlignment(), seqs[ind], seqs[i],affinegap)
-                    end            
-                aln = (collect(pa.aln))
-                end
-                qs = quals[i]
-                q = 0
-                λᵢⱼ = 1.0
-                    for j in 1:length(aln)
+                        if !in(i,centres)          
+                            mer_dist = kmer_distance(mers[:,ind],mers[:,i],length(seqs[ind]),length(seqs[i]))
+                            if mer_dist < kdist_cut
+                                if gapless & (kord_distance(seqs[ind], seqs[i]) == mer_dist)
+                                    aln = Tuple([(seqs[ind][j],seqs[i][j]) for j in 1:length(seqs[i])])              
+                                else
+                                    if band_size >0
+                                        pa = pairalign(OverlapAlignment(), seqs[ind], seqs[i],affinegap,true,band_size,band_size)  
+                                    else   
+                                        pa = pairalign(OverlapAlignment(), seqs[ind], seqs[i],affinegap)
+                                    end            
+                                aln = (collect(pa.aln))
+                                end
+                                qs = quals[i]
+                                q = 0
+                                λᵢⱼ = 1.0
+                                for j in 1:length(aln)
 
-                        if in(aln[j][2],l) 
-                            q+=1
-                                j_ind = base_vals[aln[j][2]]
-                                i_ind = in(aln[j][1],l) ? base_vals[aln[j][1]] : base_vals[aln[j][2]]
-                                λᵢⱼ*=  err[(i_ind-1)*4+j_ind,qs[q]+1]
-                            hdist += 1
+                                    if in(aln[j][2],l) 
+                                        q+=1
+                                            j_ind = base_vals[aln[j][2]]
+                                            i_ind = in(aln[j][1],l) ? base_vals[aln[j][1]] : base_vals[aln[j][2]]
+                                            λᵢⱼ*=  err[(i_ind-1)*4+j_ind,qs[q]+1]
+                                        hdist += 1
+                                    end
+                                end
+                            else
+                                λᵢⱼ = 0.0
+                                hdist = Inf
+                            end
+                            if λᵢⱼ * N >= E_minmax[i]
+                                push!(compI[i],length(centres))
+                                push!(compV[i],λᵢⱼ)
+                            end
+                            if λᵢⱼ * counts[ind] > E_minmax[i]
+                                E_minmax[i] = λᵢⱼ * counts[ind]
+                            end
+                            #λ[i] = λᵢⱼ
+                            hdists[i] = hdist
                         end
-                    end
-            else
-                λᵢⱼ = 0.0
-                hdist = Inf
-            end
-            λ[i] = λᵢⱼ
-            hdists[i] = hdist
-        end
-    end 
+                    end 
 end
 
 boolfunction(pvals,n,ωₐ) = any(pvals .* n .< ωₐ)
@@ -95,41 +105,43 @@ function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = fal
     expected_reads = zeros(n)
     E_minmax = zeros(n)
     hdists = zeros(n)
-    λ = zeros(n)
+    #comp = fill([Vector{Int}(undef,0),Vector{Float64}(undef,0)],n)#zeros(n)
+    compI = [Vector{Int}(undef,0) for i in 1:n]
+    compV = [Vector{Float64}(undef,0) for i in 1:n]
     # first centre is most abundant sequence 
     ind = findmax(counts)[2]
     centres = [ind]
     pvals[ind] = 1.0
     partition = fill(ind,n)
-    compare!(seqs,quals,counts,ind,centres,partition,pvals,n,[],λ, err,mers,hdists,E_minmax,band_size = band_size,kdist_cut = Inf,gapless = gapless)
+    compare!(seqs,quals,counts,ind,centres,partition,pvals,n,[],compI,compV, err,mers,hdists,E_minmax,band_size = band_size,kdist_cut = Inf,gapless = gapless)
     base_vals = Base.ImmutableDict(DNA_A=>1,DNA_C=>2,DNA_G=>3,DNA_T=>4)
     l = keys(base_vals)
     reads=[sum(counts)]
-    expected_reads .= λ .* reads
-    E_minmax .= λ .* counts[ind]
+    #expected_reads .= λ .* reads
+    #E_minmax .= λ .* counts[ind]
     
     for i in 1:n
         if !in(i,centres) 
             partition[i] = centres[1]
-            pvals[i] = get_normed_pval(reads[1],λ[i],counts[i])
+            pvals[i] = get_normed_pval(reads[1],compV[i][1],counts[i])
         end
     end
-
-
     coun = 0
     while true
         coun +=1
+        println(maximum(E_minmax))
         println(coun)
         val, ind = minp(pvals,counts,centres,partition)
+        println(val," ", ind)
         if  boolfunction(val,n,ωₐ) & !in(ind, centres)
             partition[ind] = ind
-            pvals[ind] = log_p ? 0.0 : 1.0
+            pvals[ind] = 1.0
             partition[centres] .= centres
             push!(centres,ind)
-            expected_reads = hcat(expected_reads,zeros(n))
-            λ = hcat(λ,zeros(n))
+            #expected_reads = hcat(expected_reads,zeros(n))
+            #λ = hcat(λ,zeros(n))
             hdists = hcat(hdists,zeros(n))               
-            compare!(seqs,quals,counts,ind,centres,partition,pvals,n,reads,view(λ,:,length(centres)), 
+            compare!(seqs,quals,counts,ind,centres,partition,pvals,n,reads,compI,compV, 
             err,mers,view(hdists,:,length(centres)),E_minmax,
             band_size = band_size,kdist_cut = kdist_cut,gapless = gapless)
         else
@@ -145,11 +157,17 @@ function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = fal
             end
             change = false
 
-            expected_reads .=  λ .* reads
-            for bi in 1:length(centres)
-                @inbounds for i in (1:n)[partition .== centres[bi]]
+            #expected_reads .=  λ .* reads
+            #for bi in 1:length(centres)
+            #tmp_reads = copy(reads)
+                @inbounds for i in (1:n)#[partition .== centres[bi]]
                     if !in(i,centres) 
-                        j = findmax(expected_reads[i,:])[2]# slow!
+                        #j = findmax(expected_reads[i,:])[2]# slow!
+                        λ,k = findmax(compV[i] .* reads[compI[i]])# slow!
+                        #println(k)
+                        #println(length(comp[i][2]))
+                        j = compI[i][k]
+                        #println("im $(j)")
                         prev_j = findfirst(centres .== [partition[i]])
                         if j !== prev_j
                             change = true
@@ -158,11 +176,12 @@ function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = fal
                             partition[i] = centres[j]
                         end
                         if shuff ==10
-                            pvals[i] = get_normed_pval(reads[j],λ[i,j],counts[i])
+                            pvals[i] = get_normed_pval(reads[j],compV[i][k],counts[i])
                         end         
                     end
-                end  
-            end        
+                end
+                #reads .= tmp_reads  
+            #end        
         end
     end
     reads = [sum(counts[partition .== i]) for i in centres]'
@@ -191,7 +210,7 @@ function get_trans(centres,seqs,quals,counts,partition,n)
     base_vals = Base.ImmutableDict(DNA_A=>1,DNA_C=>2,DNA_G=>3,DNA_T=>4)
     l = keys(base_vals)
     trans_mat = zeros(Int,16,41)
-    Threads.@threads for i in 1:n
+    for i in 1:n
         if !in(i,centres)
             pa = pairalign(OverlapAlignment(), seqs[partition[i]], seqs[i],affinegap)
             qs = quals[i]#Int.(round.(derep.quality[i]))
@@ -203,7 +222,9 @@ function get_trans(centres,seqs,quals,counts,partition,n)
                         
                             j_ind = base_vals[aln[j][2]]
                             i_ind = in(aln[j][1],l) ? base_vals[aln[j][1]] : base_vals[aln[j][2]]
-                            trans_mat[(i_ind-1)*4+j_ind, qs[q]+1] +=counts[i]
+                            if i_ind !== j_ind
+                                trans_mat[(i_ind-1)*4+j_ind, qs[q]+1] +=counts[i]
+                            end
                         
                     end
             end
@@ -213,6 +234,7 @@ function get_trans(centres,seqs,quals,counts,partition,n)
 end
 function learnErrors(dereps ::Vector{DataFrame};nbases = 1e8, band_size = 16,ωₐ = 1e-40,kdist_cut = 0.42)
 
+    st = time()
     base_count = 0
     dereps_for_errs = []
     mers = []
@@ -244,6 +266,7 @@ function learnErrors(dereps ::Vector{DataFrame};nbases = 1e8, band_size = 16,ω�
        # println(errs[i] .- errs[i-1])
         println(mean(abs.(errs[i] .- errs[i-1])))
         println(any([errs[i][.!isnan.(errs[i])] ≈ errs[j][.!isnan.(errs[j])] for j in 1:i-1]))
+        println("time is : $(time() - st)")
        println(UnicodePlots.heatmap(errs[i] .- errs[i-1]))
     end
     return errs,trans_mat, trans_mats
