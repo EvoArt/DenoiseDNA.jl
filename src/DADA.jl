@@ -1,3 +1,5 @@
+
+include("DADA\\errormodels.jl")
 ρₚₒᵢₛ = StatsFuns.poispdf
 get_pval(nⱼλᵢⱼ,aⱼ) = poisccdf(nⱼλᵢⱼ,aⱼ-1)
 
@@ -12,42 +14,7 @@ end
 get_normed_pval(nⱼ,λᵢⱼ,aⱼ) = get_pval(nⱼ*λᵢⱼ,aⱼ)/get_norm(nⱼ*λᵢⱼ) #get_norm(nⱼ*λᵢⱼ)?
 
 
-function loess_errors(mat)
-    est = Array{Float64}(undef,0,size(mat)[2])
-    qs = float.(1:41)
-      for j in 1:4
-          group = 4*(j-1) 
-          tot = vec(sum(mat[group+1:group+4,:], dims = 1))
-          for i in 1:4
-          if i != j
-              errs  = mat[group+i,:]
-              rlogp = log10.((errs .+1) ./tot)  # 1 psuedocount for each err, but if tot=0 will give NA
-              rlogp .= inf2nan.(rlogp)
-              model = loess(qs,rlogp)
-              pred = Loess.predict(model, qs)
-              R"df <- data.frame(q=$(qs), errs=$(errs), tot=$(tot), rlogp=$(rlogp))"
-              R"mod.lo <- loess(rlogp ~ q, df, weights=tot)" ###!
-          #        mod.lo <- loess(rlogp ~ q, df)
-              pred = rcopy(R"predict(mod.lo, $(qs))")
-              #println(ismissing.(pred)')
-              pred[ismissing.(pred)] .= NaN
-              maxrli = findlast(x-> !isnan(x),pred)
-              minrli = findfirst(x-> !isnan(x),pred)
-              pred[maxrli:end] .= pred[maxrli]
-              pred[1:minrli] .= pred[minrli]
-  
-              est = vcat(est, 10 .^pred')
-              end
-          end
-      end
-      clamp!(est,1e-7,1.0) # editing out this line give closer output to R
-      err = vcat(1 .-sum(est[1:3,:],dims = 1), est[1:3,:],
-                 est[4,:]', 1 .-sum(est[4:6,:],dims = 1), est[5:6,:],
-                 est[7:8,:], 1 .-sum(est[7:9,:],dims = 1), est[9,:]',
-                 est[10:12,:], 1 .-sum(est[10:12,:], dims = 1))
-      return err
-  end
-  
+
 function compare!(seqs,quals,counts,ind,centres,partition,pvals,n,reads,λ, err,mers,hdists,E_minmax; band_size = 16,kdist_cut = 0.42,gapless = false)
     affinegap = AffineGapScoreModel(match=5,
                                 mismatch=-4,
@@ -152,6 +119,7 @@ function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = fal
     coun = 0
     while true
         coun +=1
+        println(coun)
         val, ind = minp(pvals,counts,centres,partition)
         if  boolfunction(val,n,ωₐ) & !in(ind, centres)
             partition[ind] = ind
@@ -243,16 +211,6 @@ function get_trans(centres,seqs,quals,counts,partition,n)
     end 
     return trans_mat
 end
-
-function learnErrors(dereps ::Vector{String};nbases = 1e8, band_size = 16,ωₐ = 1e-40,kdist_cut = 0.42)
-    dereps = dereplicate.(dereps)
-    return learnErrors(dereps,nbases = nbases , band_size = band_size,ωₐ = ωₐ,kdist_cut = kdist_cut)
-end
-
-function learnErrors(derep ::DataFrame;nbases = 1e8, band_size = 16,ωₐ = 1e-40,kdist_cut = 0.42)
-    return learnErrors([derep],nbases = nbases , band_size = band_size,ωₐ = ωₐ,kdist_cut = kdist_cut)
-end
-
 function learnErrors(dereps ::Vector{DataFrame};nbases = 1e8, band_size = 16,ωₐ = 1e-40,kdist_cut = 0.42)
 
     base_count = 0
@@ -268,17 +226,17 @@ function learnErrors(dereps ::Vector{DataFrame};nbases = 1e8, band_size = 16,ω�
             break
         end
     end
-    counts = derep.count
+    #counts = derep.count
     err = ones(16,41)
     trans_mat = zeros(16,41)
     errs = [err]
-    partition = Vector{Int}(undef,length(counts))
-    partition=[]
     trans_mats =Vector{Array}(undef,length(dereps_for_errs))
     for i in 2:12
-        Threads.@threads for j in 1:length(dereps_for_errs)
+        #Threads.@threads for j in 1:length(dereps_for_errs)
+            for j in 1:length(dereps_for_errs)
             derep = dereps_for_errs[j]
-            _,trans_mats[j],_,_,_,_,_ = clustering(derep.sequence,derep.count,derep.quality,mers[j],err,ωₐ, band_size = band_size,log_p = true, kdist_cut = kdist_cut)
+            trans_mats[j]= clustering(derep.sequence,derep.count,derep.quality,mers[j],err,ωₐ,
+             band_size = band_size,log_p = true, kdist_cut = kdist_cut).trans
         end
         trans_mat = sum(trans_mats)
         err = loess_errors(trans_mat)
@@ -289,6 +247,14 @@ function learnErrors(dereps ::Vector{DataFrame};nbases = 1e8, band_size = 16,ω�
        println(UnicodePlots.heatmap(errs[i] .- errs[i-1]))
     end
     return errs,trans_mat, trans_mats
+end
+function learnErrors(dereps ::Vector{String};nbases = 1e8, band_size = 16,ωₐ = 1e-40,kdist_cut = 0.42)
+    dereps = dereplicate.(dereps)
+    return learnErrors(dereps,nbases = nbases , band_size = band_size,ωₐ = ωₐ,kdist_cut = kdist_cut)
+end
+
+function learnErrors(derep ::DataFrame;nbases = 1e8, band_size = 16,ωₐ = 1e-40,kdist_cut = 0.42)
+    return learnErrors([derep],nbases = nbases , band_size = band_size,ωₐ = ωₐ,kdist_cut = kdist_cut)
 end
 
 
@@ -332,3 +298,35 @@ function mergePairs(dadaF,derepF,dadaR,derepR)
     df = Dataframe(hcat(pairsArr,aln.(alignments),abundance),[:rev,:fwd,:aln,:abundance])
     return df
 end
+
+
+function pairalign(::OverlapAlignment, a::S1, b::S2, score::AffineGapScoreModel{T}, banded::Bool,lower_offset,upper_offset;
+    score_only::Bool=false) where {S1,S2,T}
+    m = length(a)
+    n = length(b)
+    if banded
+        if m > n
+            L = m - n + lower_offset
+            U = upper_offset
+        else
+            L = lower_offset
+            U = n - m + upper_offset
+        end
+        bnw = BioAlignments.BandedNeedlemanWunsch{T}(m, n, L, U)
+        score = BioAlignments.run!(bnw, a, b, score.submat,
+        T(0), T(0), score.gap_open, score.gap_extend, T(0), T(0),
+        T(0), T(0), score.gap_open, score.gap_extend, T(0), T(0),
+        )
+        if score_only
+            return BioAlignments.PairwiseAlignmentResult{S1,S2}(score, true)
+        else
+            a′ = BioAlignments.traceback(bnw, a, b, (m, n))
+            return BioAlignments.PairwiseAlignmentResult(score, true, a′, b)
+        end
+    end
+end
+
+
+
+
+
