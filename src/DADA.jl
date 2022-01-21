@@ -222,9 +222,7 @@ function get_trans(centres,seqs,quals,counts,partition,n)
                         
                             j_ind = base_vals[aln[j][2]]
                             i_ind = in(aln[j][1],l) ? base_vals[aln[j][1]] : base_vals[aln[j][2]]
-                            if i_ind !== j_ind
                                 trans_mat[(i_ind-1)*4+j_ind, qs[q]+1] +=counts[i]
-                            end
                         
                     end
             end
