@@ -26,8 +26,8 @@ function quality_plot(file::String)
     end
     fig = Figure()
     ax = Axis(fig[1,1])
-    heatmap!(ax,hm_mat[:,2:end], colormap = (:viridis,0.7))
-    lines!(ax,q50, color = :red)
+    CairoMakie.heatmap!(ax,hm_mat[:,2:end], colormap = (:viridis,0.7))
+    CairoMakie.lines!(ax,q50, color = :red)
     return fig
 end
 
@@ -54,8 +54,8 @@ function quality_plot(file::String,ax)
         end
     end
     
-    heatmap!(ax,hm_mat[:,2:end], colormap = (:viridis,0.7))
-    lines!(ax,q50, color = :red)
+    CairoMakie.heatmap!(ax,hm_mat[:,2:end], colormap = (:viridis,0.7))
+    CairoMakie.lines!(ax,q50, color = :red)
 end
 
 function quality_plot(dir::String,identifier::String,out_path = "out.pdf";cols = 2, title_len = 28, title_from =false)
