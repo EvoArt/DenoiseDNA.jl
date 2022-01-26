@@ -95,7 +95,7 @@ function shuffle(centres,partition,compI,compV,reads,pvals,counts,n,shuff,max_sh
     change = false
     @inbounds for i in (1:n)
         if !in(i,centres) 
-            λ,k = findmax(compV[i] .* reads[compI[i]])
+            _,k = findmax(compV[i] .* reads[compI[i]])
             j = compI[i][k]
             prev_j = findfirst(centres .== [partition[i]])
             if j !== prev_j
@@ -137,10 +137,8 @@ function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = fal
             pvals[i] = get_normed_pval(reads[1],compV[i][1],counts[i])
         end
     end
-    coun = 0
     while true
-        coun +=1
-        println(coun)
+   
         val, ind = minp(pvals,counts,centres,partition)
         if  boolfunction(val,n,ωₐ) & !in(ind, centres)
             partition[ind] = ind
@@ -169,7 +167,7 @@ function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = fal
     reads = [sum(counts[partition .== i]) for i in centres]'
     trans_mat = get_trans(centres,seqs,quals,counts,partition,n)
     cluster_map = Vector{Int}(undef,n)
-
+    pc = copy(partition)
     center_raws = []
     for i in 1:length(centres)
         boolmask = partition .== centres[i]
@@ -184,8 +182,10 @@ function clustering(seqs, counts, quals,mers,err,ωₐ;band_size =16,log_p = fal
     for i in 1:n
         cluster_map[i] = partition_map[partition[i]]
     end
+    #trans_mat = get_trans(centres,seqs,quals,counts,partition,n)
 
-    return (df =DataFrame([center_raws,vec(reads)],[:sequence,:abundance]),trans =  trans_mat,pvals = pvals,cluster_map =cluster_map)
+    return (df =DataFrame([center_raws,vec(reads)],[:sequence,:abundance]),trans =  trans_mat,pvals = pvals,cluster_map =cluster_map,
+    new_partition = partition,old_partition = pc)
 end
 
 function get_trans(centres,seqs,quals,counts,partition,n)
@@ -197,20 +197,24 @@ function get_trans(centres,seqs,quals,counts,partition,n)
     l = keys(base_vals)
     trans_mat = zeros(Int,16,41)
     for i in 1:n
-        if !in(i,centres)
+        if 1==1#!in(i,centres)
             pa = pairalign(OverlapAlignment(), seqs[partition[i]], seqs[i],affinegap)
+            #qs2 = quals[partition[i]]#Int.(round.(derep.quality[i]))
             qs = quals[i]#Int.(round.(derep.quality[i]))
             q = 0
             aln = (collect(pa.aln))
             for j in 1:length(aln)# need to make this start from start of seq[i] in alignment e.g. firt !== DNA_GAP
-                    if in(aln[j][1],l) 
-                        if in(aln[j][2],l)
-                            q+=1        
-                            i_ind = base_vals[aln[j][2]]
+                    if in(aln[j][2],l)
+                        q+=1        
+                        if in(aln[j][1],l) 
+                            i_ind = base_vals[aln[j][1]]
                             j_ind =  base_vals[aln[j][2]] 
+                            #i_ind = in(aln[j][1],l) ? base_vals[aln[j][1]] : base_vals[aln[j][2]]
+                            #Q = !in(i,centres) ? qs[q]+1 : qs[q]
+                            #trans_mat[(i_ind-1)*4+j_ind, Q] +=counts[i]
                             trans_mat[(i_ind-1)*4+j_ind, qs[q]+1] +=counts[i]
-                        end
-                        
+                            #trans_mat[(i_ind-1)*4+j_ind,Int(round(mean([qs[q],qs2[q]])))+1] +=counts[i]
+                        end                   
                     end
             end
         end
@@ -228,13 +232,14 @@ function learnErrors(dereps ::Vector{DataFrame}, max_tries = 10;nbases = 1e8, ba
         push!(dereps_for_errs, derep)
         push!(mers,kmer_count(derep))
         base_count += sum(derep.count .* length.(derep.sequence))
-        println("$(base_count) bases in $(j) samples")
         if base_count > nbases
             break
         end
     end
+    println("$(base_count) bases in $(length(dereps_for_errs)) samples")
     #counts = derep.count
     err = ones(16,41)
+    #err = fill(.25,16,41)
     trans_mat = zeros(16,41)
     errs = [err]
     trans_mats =Vector{Array}(undef,length(dereps_for_errs))
