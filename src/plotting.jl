@@ -1,4 +1,3 @@
-
 nanmean(x) = mean(filter(!isnan, x))
 nanquantile(x,p) = quantile(filter(!isnan, x),p)
 
@@ -76,10 +75,10 @@ function quality_plot(dir::String,identifier::String,out_path = "out.pdf";cols =
     k = length(file_list) ÷ n
     for j in 1:k
         fig = Figure()
-        set = (j-1)*n+1
+        set = (j-1)*n#+1
         xs = repeat(1:cols,(n+cols)÷cols)
         ys = vcat([fill(i,cols) for i in 1:((n+cols)÷cols)]...)
-        for i in 1:n
+        for i in 1:max(n,length(file_list)-(k*n))
             try
             if title_from == false
                 start = max(1,length(titles[i+set])-title_len)
