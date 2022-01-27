@@ -20,6 +20,7 @@ StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 UnicodePlots = "b8865327-cd53-5732-bb35-84acbb429228"
 
 [compat]
+Loess = "0.5"
 julia = "1.6"
 
 [extras]
