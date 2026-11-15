@@ -1,6 +1,5 @@
 # DenoiseDNA.jl
 
-[![Docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://EvoArt.github.io/DenoiseDNA.jl/stable)
 [![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://EvoArt.github.io/DenoiseDNA.jl/dev)
 [![CI](https://github.com/EvoArt/DenoiseDNA.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/EvoArt/DenoiseDNA.jl/actions/workflows/CI.yml)
 
