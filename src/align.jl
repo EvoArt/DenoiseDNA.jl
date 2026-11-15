@@ -21,15 +21,11 @@ mutable struct AlignBuffer
     d::Vector{Int16}          # scores (anti-diagonal aligner)
     diag::Vector{Int16}       # diagonal scores of one anti-diagonal
     d32::Vector{Int32}        # scores (row-major aligners)
-    gcol::Vector{Int32}       # per-row / per-column gap penalties (row-major aligners)
-    gcol2::Vector{Int32}
-    h1::Vector{Bool}          # homopolymer masks
-    h2::Vector{Bool}
     al0::Vector{UInt8}
     al1::Vector{UInt8}
     len::Int
 end
-AlignBuffer() = AlignBuffer(Int16[], Int16[], Int16[], Int32[], Int32[], Int32[], Bool[], Bool[], UInt8[], UInt8[], 0)
+AlignBuffer() = AlignBuffer(Int16[], Int16[], Int16[], Int32[], UInt8[], UInt8[], 0)
 
 @inline function _grow!(v::Vector, n::Integer)
     length(v) < n && resize!(v, n)
@@ -270,94 +266,80 @@ function nwalign_vectorized!(buf::AlignBuffer, s1in::AbstractVector{UInt8}, s2in
 end
 
 # --------------------------------------------------------------------------
-# Row-major banded ends-free Needleman-Wunsch: ports of nwalign_endsfree and
-# nwalign_endsfree_homo. Used by mergePairs (via nwalign), and by dada when
-# VECTORIZED_ALIGNMENT=FALSE or HOMOPOLYMER_GAP_PENALTY is set.
-# band < 0 disables banding. Cell values and tie-breaking are R's; the loops
-# are arranged so the inner one has no per-cell branches on the position
-# (all scores Int32, gap penalties per row / per column precomputed).
+# Standard banded ends-free Needleman-Wunsch (port of nwalign_endsfree).
+# Used by mergePairs (via nwalign) and when VECTORIZED_ALIGNMENT=FALSE.
+# band < 0 disables banding.
 # --------------------------------------------------------------------------
-
-# Borders and band edges of the DP matrices; returns (d, p, ncol, lband, rband).
-# d[i*ncol + j + 1] is cell (i, j).
-function _rowmajor_setup!(buf::AlignBuffer, len1, len2, band, endsfree, g32::Int32)
+function nwalign_endsfree!(buf::AlignBuffer, s1::AbstractVector{UInt8}, s2::AbstractVector{UInt8},
+                           match::Integer, mismatch::Integer, gap_p::Integer, band::Integer;
+                           endsfree::Bool=true)
+    len1 = length(s1); len2 = length(s2)
     ncol = len2 + 1; nrow = len1 + 1
     _grow!(buf.d32, ncol * nrow); _grow!(buf.p, ncol * nrow)
     d = buf.d32; p = buf.p
-    @inbounds if endsfree
-        for i in 0:len1
-            d[i*ncol+1] = 0; p[i*ncol+1] = 3
+    @inline idx(i, j) = i * ncol + j + 1
+    m32 = Int32(match); mm32 = Int32(mismatch); g32 = Int32(gap_p)
+
+    if endsfree
+        @inbounds for i in 0:len1
+            d[idx(i, 0)] = 0; p[idx(i, 0)] = 3
         end
-        for j in 0:len2
-            d[j+1] = 0; p[j+1] = 2
+        @inbounds for j in 0:len2
+            d[idx(0, j)] = 0; p[idx(0, j)] = 2
         end
     else
         d[1] = 0; p[1] = 0
-        for i in 1:len1
-            d[i*ncol+1] = d[(i-1)*ncol+1] + g32; p[i*ncol+1] = 3
+        @inbounds for i in 1:len1
+            d[idx(i, 0)] = d[idx(i - 1, 0)] + g32; p[idx(i, 0)] = 3
         end
-        for j in 1:len2
-            d[j+1] = d[j] + g32; p[j+1] = 2
+        @inbounds for j in 1:len2
+            d[idx(0, j)] = d[idx(0, j - 1)] + g32; p[idx(0, j)] = 2
         end
     end
-    lband, rband = len2 > len1 ? (band, band + len2 - len1) :
-                   len1 > len2 ? (band + len1 - len2, band) : (band, band)
+
+    if len2 > len1
+        lband = band; rband = band + len2 - len1
+    elseif len1 > len2
+        lband = band + len1 - len2; rband = band
+    else
+        lband = band; rband = band
+    end
     if band >= 0 && (band < len1 || band < len2)
         @inbounds for i in 0:len1
-            i - lband - 1 >= 0 && (d[i*ncol+i-lband] = -9999)
-            i + rband + 1 <= len2 && (d[i*ncol+i+rband+2] = -9999)
+            i - lband - 1 >= 0 && (d[idx(i, i - lband - 1)] = -9999)
+            i + rband + 1 <= len2 && (d[idx(i, i + rband + 1)] = -9999)
         end
     end
-    return d, p, ncol, lband, rband
-end
 
-# One DP cell, with R's tie-breaking (up, then left, then diagonal).
-@inline function _nw_cell!(d, p, k, up::Int32, left::Int32, dg::Int32)
-    @inbounds if up >= dg && up >= left
-        d[k] = up; p[k] = Int16(3)
-    elseif left >= dg
-        d[k] = left; p[k] = Int16(2)
-    else
-        d[k] = dg; p[k] = Int16(1)
-    end
-end
-
-# Fill the body. `upgap[i]` is the penalty of an up move in row i, `leftgap[j]`
-# of a left move into column j; `freelast` makes the last row's left moves and
-# the last column's up moves free (ends-free).
-function _rowmajor_fill!(d, p, ncol, s1, s2, m32::Int32, mm32::Int32, upgap, leftgap, freelast::Bool,
-                         band, lband, rband)
-    len1 = length(s1); len2 = length(s2)
     @inbounds for i in 1:len1
-        l, r = band >= 0 ? (max(i - lband, 1), min(i + rband, len2)) : (1, len2)
-        row = i * ncol + 1; prow = row - ncol        # d[row + j] is cell (i, j)
-        ug = upgap[i]
-        a = s1[i]
-        lastrow = freelast && i == len1
-        rr = freelast && r == len2 ? r - 1 : r        # the last column is done after the loop
-        for j in l:rr
-            left = d[row+j-1] + (lastrow ? Int32(0) : leftgap[j])
-            up = d[prow+j] + ug
-            dg = d[prow+j-1] + (a == s2[j] ? m32 : mm32)
-            _nw_cell!(d, p, row + j, up, left, dg)
+        if band >= 0
+            l = max(i - lband, 1); r = min(i + rband, len2)
+        else
+            l = 1; r = len2
         end
-        if rr < r
-            j = r
-            left = d[row+j-1] + (lastrow ? Int32(0) : leftgap[j])
-            up = d[prow+j]
-            dg = d[prow+j-1] + (a == s2[j] ? m32 : mm32)
-            _nw_cell!(d, p, row + j, up, left, dg)
+        a = s1[i]
+        for j in l:r
+            left = d[idx(i, j - 1)]
+            (!endsfree || i != len1) && (left += g32)
+            up = d[idx(i - 1, j)]
+            (!endsfree || j != len2) && (up += g32)
+            dg = d[idx(i - 1, j - 1)] + (a == s2[j] ? m32 : mm32)
+            k = idx(i, j)
+            if up >= dg && up >= left
+                d[k] = up; p[k] = 3
+            elseif left >= dg
+                d[k] = left; p[k] = 2
+            else
+                d[k] = dg; p[k] = 1
+            end
         end
     end
-end
 
-function _rowmajor_traceback!(buf::AlignBuffer, s1, s2, ncol)
-    len1 = length(s1); len2 = length(s2)
     _grow!(buf.al0, len1 + len2); _grow!(buf.al1, len1 + len2)
-    al0 = buf.al0; al1 = buf.al1; p = buf.p
+    al0 = buf.al0; al1 = buf.al1
     len_al = 0; i = len1; j = len2
     @inbounds while i > 0 || j > 0
-        pij = p[i*ncol+j+1]
+        pij = p[idx(i, j)]
         len_al += 1
         if pij == 1
             i -= 1; j -= 1; al0[len_al] = s1[i+1]; al1[len_al] = s2[j+1]
@@ -374,50 +356,84 @@ function _rowmajor_traceback!(buf::AlignBuffer, s1, s2, ncol)
     return buf
 end
 
-function nwalign_endsfree!(buf::AlignBuffer, s1::AbstractVector{UInt8}, s2::AbstractVector{UInt8},
-                           match::Integer, mismatch::Integer, gap_p::Integer, band::Integer;
-                           endsfree::Bool=true)
-    g32 = Int32(gap_p)
-    d, p, ncol, lband, rband = _rowmajor_setup!(buf, length(s1), length(s2), band, endsfree, g32)
-    gaps = fill!(_grow!(buf.gcol, max(length(s1), length(s2))), g32)
-    _rowmajor_fill!(d, p, ncol, s1, s2, Int32(match), Int32(mismatch), gaps, gaps, endsfree, band, lband, rband)
-    return _rowmajor_traceback!(buf, s1, s2, ncol)
-end
-
-# Mark positions lying in homopolymer runs of length >= 3 (into h[1:length(s)]).
-function _homopolymer_mask!(h::Vector{Bool}, s::AbstractVector{UInt8})
+"Mark positions lying in homopolymer runs of length >= 3."
+function _homopolymer_mask(s::AbstractVector{UInt8})
     n = length(s)
-    _grow!(h, n)
+    h = falses(n)
     i = 1
-    @inbounds for j in 1:n
+    for j in 1:n
         if j == n || s[j] != s[j+1]
-            v = j - i >= 2
-            for k in i:j
-                h[k] = v
-            end
+            j - i >= 2 && (h[i:j] .= true)
             i = j + 1
         end
     end
     return h
 end
 
-# Gaps inside homopolymers cost homo_gap_p instead of gap_p.
+# Port of nwalign_endsfree_homo: gaps inside homopolymers cost homo_gap_p.
 function nwalign_endsfree_homo!(buf::AlignBuffer, s1::AbstractVector{UInt8}, s2::AbstractVector{UInt8},
                                 match::Integer, mismatch::Integer, gap_p::Integer, homo_gap_p::Integer,
                                 band::Integer)
     len1 = length(s1); len2 = length(s2)
-    g32 = Int32(gap_p); h32 = Int32(homo_gap_p)
-    homo1 = _homopolymer_mask!(buf.h1, s1); homo2 = _homopolymer_mask!(buf.h2, s2)
-    upgap = _grow!(buf.gcol, len1); leftgap = _grow!(buf.gcol2, len2)
+    homo1 = _homopolymer_mask(s1); homo2 = _homopolymer_mask(s2)
+    ncol = len2 + 1; nrow = len1 + 1
+    _grow!(buf.d32, ncol * nrow); _grow!(buf.p, ncol * nrow)
+    d = buf.d32; p = buf.p
+    @inline idx(i, j) = i * ncol + j + 1
+    @inbounds for i in 0:len1
+        d[idx(i, 0)] = 0; p[idx(i, 0)] = 3
+    end
+    @inbounds for j in 0:len2
+        d[idx(0, j)] = 0; p[idx(0, j)] = 2
+    end
+    if len2 > len1
+        lband = band; rband = band + len2 - len1
+    elseif len1 > len2
+        lband = band + len1 - len2; rband = band
+    else
+        lband = band; rband = band
+    end
+    if band >= 0 && (band < len1 || band < len2)
+        @inbounds for i in 0:len1
+            i - lband - 1 >= 0 && (d[idx(i, i - lband - 1)] = -9999)
+            i + rband + 1 <= len2 && (d[idx(i, i + rband + 1)] = -9999)
+        end
+    end
     @inbounds for i in 1:len1
-        upgap[i] = homo1[i] ? h32 : g32
+        l, r = band >= 0 ? (max(i - lband, 1), min(i + rband, len2)) : (1, len2)
+        for j in l:r
+            left = i == len1 ? d[idx(i, j - 1)] :
+                   homo2[j] ? d[idx(i, j - 1)] + homo_gap_p : d[idx(i, j - 1)] + gap_p
+            up = j == len2 ? d[idx(i - 1, j)] :
+                 homo1[i] ? d[idx(i - 1, j)] + homo_gap_p : d[idx(i - 1, j)] + gap_p
+            dg = d[idx(i - 1, j - 1)] + (s1[i] == s2[j] ? match : mismatch)
+            k = idx(i, j)
+            if up >= dg && up >= left
+                d[k] = up; p[k] = 3
+            elseif left >= dg
+                d[k] = left; p[k] = 2
+            else
+                d[k] = dg; p[k] = 1
+            end
+        end
     end
-    @inbounds for j in 1:len2
-        leftgap[j] = homo2[j] ? h32 : g32
+    _grow!(buf.al0, len1 + len2); _grow!(buf.al1, len1 + len2)
+    al0 = buf.al0; al1 = buf.al1
+    len_al = 0; i = len1; j = len2
+    @inbounds while i > 0 || j > 0
+        pij = p[idx(i, j)]
+        len_al += 1
+        if pij == 1
+            i -= 1; j -= 1; al0[len_al] = s1[i+1]; al1[len_al] = s2[j+1]
+        elseif pij == 2
+            j -= 1; al0[len_al] = GAP; al1[len_al] = s2[j+1]
+        else
+            i -= 1; al0[len_al] = s1[i+1]; al1[len_al] = GAP
+        end
     end
-    d, p, ncol, lband, rband = _rowmajor_setup!(buf, len1, len2, band, true, g32)
-    _rowmajor_fill!(d, p, ncol, s1, s2, Int32(match), Int32(mismatch), upgap, leftgap, true, band, lband, rband)
-    return _rowmajor_traceback!(buf, s1, s2, ncol)
+    reverse!(view(al0, 1:len_al)); reverse!(view(al1, 1:len_al))
+    buf.len = len_al
+    return buf
 end
 
 # --------------------------------------------------------------------------
