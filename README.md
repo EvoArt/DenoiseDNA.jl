@@ -26,7 +26,7 @@ seqtab = makeSequenceTable(merged; names=sample_names)
 nochim = removeBimeraDenovo(seqtab; method="consensus", multithread=true)
 ```
 
-See the [tutorial](https://EvoArt.github.io/DenoiseDNA.jl/stable/tutorial/)
+See the [tutorial](https://EvoArt.github.io/DenoiseDNA.jl/dev/tutorial/)
 for the full workflow. Taxonomy is assigned with
 [AssignTaxonomy.jl](https://github.com/EvoArt/AssignTaxonomy.jl).
 
