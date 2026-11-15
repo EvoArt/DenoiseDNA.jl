@@ -301,7 +301,7 @@ function Base.show(io::IO, ::MIME"text/plain", st::SequenceTable)
     colsum = vec(sum(st.table; dims=1))
     rowsum = vec(sum(st.table; dims=2))
     prev = vec(sum(st.table .> 0; dims=1))
-    _kv(io, "length", _lengths(io, st.sequences, ones(na)) * _note(io, " of ASVs"))
+    _kv(io, "ASV length", _lengths(io, st.sequences, ones(na)))
     sr = sort(rowsum)
     _kv(io, "reads", ns == 1 ? _fmt(tot) :
                      "$(_fmt(sr[1]))–$(_fmt(sr[end])) per sample" * _note(io, " · median $(_fmt(sr[cld(ns, 2)]))"))
