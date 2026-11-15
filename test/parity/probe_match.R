@@ -1,0 +1,40 @@
+# Probe Biostrings pattern-matching semantics that removePrimers relies on.
+suppressMessages({library(Biostrings); library(dada2)})
+show <- function(label, m) {
+  cat(label, ": ", paste(sprintf("[%d,%d]", start(m), end(m)), collapse = " "), "\n", sep = "")
+}
+subj <- DNAString("AGTTGCAAAGTTGCATTTT")
+show("exact TTGCA", matchPattern("TTGCA", subj))
+show("mm1 TTGCA", matchPattern("TTGCA", subj, max.mismatch = 1))
+show("mm1 off-left CAGTT", matchPattern("CAGTT", subj, max.mismatch = 1))
+show("mm2 off-right TTTTGG", matchPattern("TTTTGG", subj, max.mismatch = 2))
+show("v mm2 off-right TTTTGG", vmatchPattern("TTTTGG", DNAStringSet(as.character(subj)), max.mismatch = 2)[[1]])
+show("mm2 off-left GGAGTT", matchPattern("GGAGTT", subj, max.mismatch = 2))
+show("v mm2 off-left GGAGTT", vmatchPattern("GGAGTT", DNAStringSet(as.character(subj)), max.mismatch = 2)[[1]])
+# IUPAC
+s2 <- DNAString("AAACGTNAAA")
+show("fixed=TRUE ACGTA vs N", matchPattern("ACGTA", s2, fixed = TRUE, max.mismatch = 0))
+show("fixed=FALSE ACGTA vs N", matchPattern("ACGTA", s2, fixed = FALSE, max.mismatch = 0))
+show("fixed=FALSE ACGTR", matchPattern("ACGTR", s2, fixed = FALSE, max.mismatch = 0))
+show("fixed=FALSE RCGTN", matchPattern("RCGTN", s2, fixed = FALSE))
+show("fixed=FALSE YCGT mm1", matchPattern("YCGT", s2, fixed = FALSE, max.mismatch = 1))
+show("fixed=c(T,F) ACGTR", matchPattern("ACGTR", s2, fixed = c(pattern = TRUE, subject = FALSE)))
+s3 <- DNAString("AAAMCGTAAA")
+show("fixed=FALSE ACGT vs M", matchPattern("ACGT", s3, fixed = FALSE))
+show("fixed=FALSE MCGT vs M", matchPattern("MCGT", s3, fixed = FALSE))
+show("fixed=FALSE CCGT vs M", matchPattern("CCGT", s3, fixed = FALSE))
+show("fixed=FALSE RCGT vs M", matchPattern("RCGT", s3, fixed = FALSE))
+# overlapping hits
+show("overlap AA mm0", matchPattern("AAA", DNAString("AAAAAA")))
+# indels
+s4 <- DNAString("CCCCACGTTGCACCCC")
+show("indel ACGTGCA", matchPattern("ACGTGCA", s4, max.mismatch = 1, with.indels = TRUE))
+show("indel ACGTTTGCA", matchPattern("ACGTTTGCA", s4, max.mismatch = 1, with.indels = TRUE))
+show("indel ACGTTGCA mm2", matchPattern("ACGTTGCA", s4, max.mismatch = 2, with.indels = TRUE))
+show("indel off-right GCACCCCAA", matchPattern("GCACCCCAA", s4, max.mismatch = 2, with.indels = TRUE))
+show("indel TTCCAA", matchPattern("CACG", DNAString("CCACGACGCC"), max.mismatch = 1, with.indels = TRUE))
+# lowercase / readFastq / reverseComplement of qualities
+fq <- ShortRead::readFastq(system.file("extdata", "samPBprimers.fastq.gz", package = "dada2"))
+cat("PB reads:", length(fq), " widths:", range(width(fq)), "\n")
+cat("PB qual enc:", class(quality(fq)), "\n")
+cat("dada2 version:", as.character(packageVersion("dada2")), " Biostrings:", as.character(packageVersion("Biostrings")), "\n")

@@ -1,0 +1,14 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "words": [
+    "amplicon", "bimera", "bimeras", "denovo", "derep", "dereps", "dereplicate", "dereplication",
+    "fastq", "fastqs", "kmer", "kmers", "kord", "kdist", "kodist", "dotsum", "klen", "nwalign",
+    "nwhamming", "errfun", "noqual", "qual", "quals", "seqtab", "nochim", "uniques", "rmath",
+    "loess", "lowess", "phix", "denoise", "denoised", "miseq", "nraw", "nclust", "nsubs",
+    "endsfree", "gapless", "budding", "unpool", "consensus", "trunc", "nonparametric", "vval",
+    "Rivest", "ehg", "dloess", "netlib", "Hermite", "dada", "Rcpp", "derepFastq", "Phred",
+    "selfconsist", "pval", "pvals", "hamming", "ASVs", "ASV", "Bioconductor", "Biostrings"
+  ],
+  "ignorePaths": ["archive/**", "test/miseqsop/**", "Manifest.toml"]
+}

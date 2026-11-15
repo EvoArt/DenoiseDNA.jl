@@ -1,68 +1,98 @@
+# K-mer screens used to skip alignments between distant sequences.
+# Ports of dada2's kmers.cpp with the semantics of the default SSE=2 path:
+#  * kmer distance = 1 - sum(min(kv1, kv2)) / (min(len1,len2) - k + 1)
+#  * ordered-kmer distance compares kmers position by position over the
+#    shorter sequence (the SSE implementation does NOT reject unequal lengths).
 
-base_vals = Base.ImmutableDict(DNA_A=>0,DNA_C=>1,DNA_G=>2,DNA_T=>3)
+const KMER_SIZE = 5
+const N_KMER = 4^KMER_SIZE
 
-function get_mer_idx(mer,k=5)
-    idx = 0
-    @turbo for i in 1:k
-        idx = 4*idx + base_vals[mer[i]]
+"Kmer index (0-based) of `seq[i:i+k-1]`, or -1 if it contains a non-ACGT base."
+@inline function _kmer_at(seq::AbstractVector{UInt8}, i::Int, k::Int)
+    kmer = 0
+    @inbounds for j in i:i+k-1
+        nt = Int(seq[j]) - 1
+        (0 <= nt <= 3) || return -1
+        kmer = 4kmer + nt
     end
-    return idx +1
+    return kmer
 end
 
-function count_mers_4_dist(seq,k = 5)
-    counts = zeros(Int,4^k)
-    for mer in each(DNAMer{k}, seq)
-        current_mer = mer.fw
-        current_mer_idx = get_mer_idx(current_mer)
-        counts[current_mer_idx] += 1
+"Fill `kv` (length 4^k) with kmer counts of `seq`."
+function assign_kmer!(kv::AbstractVector{UInt16}, seq::AbstractVector{UInt8}, k::Int=KMER_SIZE)
+    fill!(kv, 0)
+    @inbounds for i in 1:length(seq)-k+1
+        km = _kmer_at(seq, i, k)
+        km >= 0 && (kv[km+1] += 0x0001)
     end
-    return counts
-end
-function count_mers_4_dist!(seq,mer_array,i,k = 5)
-    for mer in each(DNAMer{k}, seq)
-        current_mer = mer.fw
-        current_mer_idx = get_mer_idx(current_mer)
-        mer_array[current_mer_idx,i] += 1
-    end
-end
-function kord_distance(n₁,n₂,k = 5) 
-    l1,l2 = length(n₁), length(n₂)
-    if l1 == l2
-        dist = 0.0
-        step = k-1
-        for i in 1:l1-step
-            dist += n₁[i:i+step] == n₂[i:i+step]
-        end
-        return 1-dist/(l1-step)
-    else
-        return -1.0
-    end
+    return kv
 end
 
-kmer_distance(n₁,n₂,L1,L2,k=5) = 1-sum(min.(n₁, n₂))/(min(L1,L2) - k + 1)
-function kmer_distance(derep,k = 5)
-    seqs = derep.sequence
+"Fill `kord` with the kmer index at each position (0 for invalid kmers, as in C)."
+function assign_kmer_order!(kord::AbstractVector{UInt16}, seq::AbstractVector{UInt8}, k::Int=KMER_SIZE)
+    @inbounds for i in 1:length(seq)-k+1
+        km = _kmer_at(seq, i, k)
+        kord[i] = km >= 0 ? UInt16(km) : 0x0000
+    end
+    return kord
+end
+
+@inline function kmer_dist(kv1::AbstractVector{UInt16}, len1::Int, kv2::AbstractVector{UInt16}, len2::Int, k::Int=KMER_SIZE)
+    dotsum = 0
+    @inbounds @simd for i in eachindex(kv1)
+        a = kv1[i]; b = kv2[i]
+        dotsum += ifelse(a < b, a, b)
+    end
+    return _kdist(dotsum, len1, len2, k)
+end
+
+# (uint16 accumulator in C)
+@inline _kdist(dotsum, len1, len2, k) = 1.0 - Float64(dotsum % UInt16) / ((min(len1, len2) - k) + 1.0)
+
+"""
+    KmerTable(seqs)
+
+K-mer count vectors of a set of integer-coded sequences. Counts are stored in
+8 bits, as in dada2's default SSE path, so a distance streams 1 KB per
+sequence and takes 32 counts per instruction; if any count exceeds 254
+(possible only for long reads) 16-bit counts are used instead, so distances
+are always exact.
+"""
+struct KmerTable
+    k8::Vector{UInt8}       # N_KMER counts per sequence, concatenated
+    k16::Matrix{UInt16}     # N_KMER x n, or N_KMER x 0 when every count fits in 8 bits
+end
+
+function KmerTable(seqs::AbstractVector{<:AbstractVector{UInt8}})
     n = length(seqs)
-    mer_array = zeros(Int,4^k,n)
-    for i in 1:n
-        count_mers_4_dist!(seqs[i],mer_array,i)
+    k16 = Matrix{UInt16}(undef, N_KMER, n)
+    for (j, s) in enumerate(seqs)
+        assign_kmer!(view(k16, :, j), s)
     end
-    dist_mat = Array{Float64}(undef,n,n)
-    dist_mat = zeros(n,n)
-    for i in 1:n
-        for j in 1:i
-            dist_mat[i,j] = kmer_distance(mer_array[:,i],mer_array[:,j],length(seqs[i]),length(seqs[j]),k)
-        end
-    end
-    return dist_mat
+    maximum(k16; init=0x0000) < 0x00ff || return KmerTable(UInt8[], k16)
+    return KmerTable(vec(UInt8.(k16)), zeros(UInt16, N_KMER, 0))
 end
-function kmer_count(derep,k = 5)
-    seqs = derep.sequence
-    n = length(seqs)
-    mer_array = zeros(Int,4^k,n)
-    for i in 1:n
-        count_mers_4_dist!(seqs[i],mer_array,i)
+
+"K-mer distance between sequences `i` and `j` of the table (lengths `li`, `lj`)."
+@inline function kmer_dist(t::KmerTable, i::Int, li::Int, j::Int, lj::Int, k::Int=KMER_SIZE)
+    if size(t.k16, 2) > 0
+        return kmer_dist(view(t.k16, :, i), li, view(t.k16, :, j), lj, k)
     end
-    
-    return mer_array
+    a = t.k8
+    oi = (i - 1) * N_KMER; oj = (j - 1) * N_KMER
+    acc = Vec{32,UInt16}(0)
+    @inbounds for c in 1:32:N_KMER
+        m = min(vload(Vec{32,UInt8}, a, oi + c), vload(Vec{32,UInt8}, a, oj + c))
+        acc += convert(Vec{32,UInt16}, m)
+    end
+    return _kdist(sum(acc), li, lj, k)
+end
+
+@inline function kord_dist(kord1::AbstractVector{UInt16}, len1::Int, kord2::AbstractVector{UInt16}, len2::Int, k::Int=KMER_SIZE)
+    klen = min(len1, len2) - k + 1
+    dotsum = 0
+    @inbounds @simd for i in 1:klen
+        dotsum += kord1[i] == kord2[i]
+    end
+    return _kdist(dotsum, len1, len2, k)
 end

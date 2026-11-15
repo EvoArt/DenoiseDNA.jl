@@ -5,3 +5,5 @@
 /docs/build/
 /localdata/
 /localtests.jl
+/archive/
+/docs/Manifest.toml
