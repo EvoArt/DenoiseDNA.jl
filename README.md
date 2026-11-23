@@ -2,6 +2,7 @@
 
 [![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://EvoArt.github.io/DenoiseDNA.jl/dev)
 [![CI](https://github.com/EvoArt/DenoiseDNA.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/EvoArt/DenoiseDNA.jl/actions/workflows/CI.yml)
+[![Coverage](https://codecov.io/gh/EvoArt/DenoiseDNA.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/EvoArt/DenoiseDNA.jl)
 
 Exact amplicon sequence variants from amplicon sequencing reads: the
 [DADA2](https://benjjneb.github.io/dada2/) pipeline in Julia. Same functions,
